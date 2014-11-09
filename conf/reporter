@@ -1,0 +1,4 @@
+[hotmail]
+server = imap-mail.outlook.com
+user = your_name@hotmail.com
+password = your_password

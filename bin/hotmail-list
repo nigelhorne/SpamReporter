@@ -1,0 +1,78 @@
+#!/usr/bin/env perl
+
+use strict;
+# use warnings::unused;
+use warnings;
+use diagnostics;
+use Mail::IMAPClient;
+use IO::Socket::SSL;
+use MIME::EncWords;
+use Mozilla::CA;
+use FindBin;
+use Config::Auto;
+
+my $conf = File::Spec->catdir(
+	$FindBin::Bin,
+	File::Spec->updir(),
+	'conf',
+	'reporter',
+);
+
+my $config;
+
+eval {
+	$config = Config::Auto::parse($conf);
+};
+if($@) {
+	die "Configuration error: $@ $conf";
+}
+
+my $server = $config->{hotmail}->{server};
+my $user = $config->{hotmail}->{user};
+my $password = $config->{hotmail}->{password};
+
+my $imap = Mail::IMAPClient->new(Server => $server,
+				User => $user,
+				Password => $password,
+				Ssl => 1,
+				Socket => IO::Socket::SSL->new (
+					Proto => 'tcp',
+					PeerAddr => $server,
+					PeerPort => 993,
+					SSL_verify_mode => SSL_VERIFY_NONE,
+					SSL_ca_file => Mozilla::CA::SSL_ca_file(),
+				),
+			) or
+	die "Cannot connect to $server: $@";
+ 
+$imap->select('Junk') or
+	die 'Select Spam error: ', $imap->LastError, "\n";
+
+unless($imap->message_count) {
+	$imap->logout();
+	exit 0;
+}
+
+my @messages = $imap->messages('Junk');
+
+my $nummessages = $#messages + 1;
+
+print "Showing subjects for $nummessages at $server\n";
+
+sub CATCH_PIPE { };
+$SIG{'PIPE'} = "CATCH_PIPE";
+
+foreach (@messages) {
+	my %headers = %{$imap->parse_headers($_, 'To', 'Subject')};
+
+	if($headers{'To'}) {
+		print $headers{'To'}[0];
+		print ': ';
+	}
+	if($headers{'Subject'}) {
+		print scalar(MIME::EncWords::decode_mimewords($headers{'Subject'}[0]));
+	}
+	print "\n";
+}
+
+$imap->logout();
