@@ -283,7 +283,7 @@ sub reporter {
 
 	print "Submitting $filelist to spamcop\n";
 
-	system("reporter $filelist");
+	system("spam-reporter $filelist");
 
 	print "Removing $filelist\n";
 	my @l = split(/ /, $filelist);
