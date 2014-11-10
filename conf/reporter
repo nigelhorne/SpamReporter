@@ -6,3 +6,8 @@ knujon = your_account@knujon.net
 server = imap-mail.outlook.com
 user = your_name@hotmail.com
 password = your_password
+
+[yahoo]
+server = imap.mail.yahoo.com
+user = your_name@yahoo.com
+password = your_password

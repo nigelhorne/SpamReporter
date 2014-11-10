@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 
 use strict;
-# use warnings::unused;
 use warnings;
 use diagnostics;
 use Mail::IMAPClient;
@@ -35,9 +34,9 @@ if($@) {
 	die "Configuration error: $@ $conf";
 }
 
-my $server = $config->{hotmail}->{server};
-my $user = $config->{hotmail}->{user};
-my $password = $config->{hotmail}->{password};
+my $server = $config->{yahoo}->{server};
+my $user = $config->{yahoo}->{user};
+my $password = $config->{yahoo}->{password};
 
 my @avgs = Linux::loadavg::loadavg(1);
 if($avgs[LOADAVG_1MIN] >= 3) {
@@ -47,9 +46,11 @@ if($avgs[LOADAVG_1MIN] >= 3) {
 # Ensure no more than one instance
 my $t = Proc::ProcessTable->new();
 my $count = 0;
+my $filelist;
+my $phishlist;
 
 foreach (@{$t->table}) {
-	$count += ($_->cmndline =~ /perl -w.hotmail-reporter+/);
+	$count += ($_->cmndline =~ /perl -w.+yahoo-report+/);
 	if($count > 1) {
 		exit 0;
 	}
@@ -70,29 +71,6 @@ my $imap = Mail::IMAPClient->new(Server => $server,
 			) or
 	die "Cannot connect to $server: $@";
 
-$imap->select('Junk') or
-	die 'Select SPAM error: ', $imap->LastError, "\n";
-
-unless($imap->message_count) {
-	$imap->logout();
-	exit 0;
-}
-
-my @messages = $imap->messages('Junk') or
-	die "Cannot get list of messages from $server: $!";
-
-my $nummessages = $#messages + 1;
-
-if($nummessages == 0) {
-	print "Nothing to do\n";
-	$imap->logout();
-	exit 0;
-}
-print "Retrieving $nummessages messages from $server\n";
-
-sub CATCH_PIPE { };
-$SIG{'PIPE'} = "CATCH_PIPE";
-
 my $scanner = ClamAV::Client->new(socket_name => '/var/run/clamav/clamd.sock');
 
 if($scanner) {
@@ -107,98 +85,131 @@ if($scanner) {
 	}
 }
 
-my @messagelist = ();
-my $dups = 0;
+process_folder({ imap => $imap, folder => 'Bulk Mail', scanner => $scanner });
+process_folder({ imap => $imap, folder => 'Junk', scanner => $scanner });
 
-my $memd = new Cache::Memcached {
-	'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
-	'debug' => 0,
-	'compress_threshold' => 10_000
-};
-
-foreach my $msgid (@messages) {
-	my $message = $imap->message_string($msgid);
-	unless($message) {
-		die "Can't retrieve $msgid: $@";
-	}
-	$message =~ s/\r//g;
-
-	my $size = length($message);
-
-	# print "id $msgid size $size\n";
-	if($size > (1024 * 1024)) {
-		print "Message $msgid is very big ($size bytes), ignoring\n";
-		$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
-		next;
-	}
-
-	# Calculate the MD5 sum of the body of the email - only
-	# submit it if we haven't seen it before
-	if($message =~ /.+?\n{2}(.+)/s) {
-		my $digest = Digest::MD5::md5_hex($1);
-
-		if($memd->get($digest)) {
-			# print "Ignoring $digest\n";
-			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
-			$dups++;
-			next;
-		}
-		$memd->set($digest, 1);
-	}
-	$messagelist[$msgid] = $message;
-
-	# print "Stored message $msgid\n";
-
-	$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
-}
-
-$imap->close();
 $imap->logout();
 
-if($dups) {
-	print "$dups duplicates were ignored\n";
-}
+sub process_folder {
+	my $params = shift;
 
-chdir File::Spec->tmpdir() || die File::Spec->tmpdir();
+	my $imap = $params->{'imap'};
+	my $folder = $params->{'folder'};
+	my $scanner = $params->{'scanner'};
 
-my $filelist;
-my $phishlist;
+	unless($imap->select($folder)) {
+		warn "Select $folder error: ", $imap->LastError, "\n";
+		return;
+	}
 
-foreach my $message (@messagelist) {
-	if($message) {
-		# Don't threads too much, it's SO memory hungry and if you've got
-		# 10,000 messages then watch your Linux machine crash. The joins don't
-		# seem to recover memory much.
-		doit($message);
-		# if($nummessages == 1) {
-			# doit($message);
-		# } else {
-			# my $t = threads->create("doit", $message);
-			# # Don't spawn more than 4 threads at the same time
-			# if((threads->list % 4) == 3) {
-				# foreach (threads->list) {
-					# $_->join();
+	unless($imap->message_count) {
+		print "Nothing to do\n";
+		$imap->close();
+		return;
+	}
+
+	my @messages = $imap->messages($folder) or
+		die "Cannot get list of messages from $server: $!";
+
+	my $nummessages = $#messages + 1;
+
+	if($nummessages == 0) {
+		print "Nothing to do\n";
+		$imap->close();
+		return;
+	}
+	print "Retrieving $nummessages messages from $server\n";
+
+	sub CATCH_PIPE { };
+	$SIG{'PIPE'} = "CATCH_PIPE";
+
+	my @messagelist = ();
+	my $dups = 0;
+
+	my $memd = new Cache::Memcached {
+		'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
+		'debug' => 0,
+		'compress_threshold' => 10_000
+	};
+
+	foreach my $msgid (@messages) {
+		my $message = $imap->message_string($msgid);
+		unless($message) {
+			die "Can't retrieve $msgid: $@";
+		}
+		$message =~ s/\r//g;
+
+		my $size = length($message);
+
+		# print "id $msgid size $size\n";
+		if($size > (1024 * 1024)) {
+			print "Message $msgid is very big ($size bytes), ignoring\n";
+			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+			next;
+		}
+
+		# Calculate the MD5 sum of the body of the email - only
+		# submit it if we haven't seen it before
+		if($message =~ /.+?\n{2}(.+)/s) {
+			my $digest = Digest::MD5::md5_hex($1);
+
+			if($memd->get($digest)) {
+				# print "Ignoring $digest\n";
+				$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+				$dups++;
+				next;
+			}
+			$memd->set($digest, 1);
+		}
+		$messagelist[$msgid] = $message;
+
+		# print "Stored message $msgid\n";
+
+		$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+	}
+
+	$imap->close();
+
+	if($dups) {
+		print "$dups duplicates were ignored\n";
+	}
+
+	chdir File::Spec->tmpdir() || die File::Spec->tmpdir();
+
+	foreach my $message (@messagelist) {
+		if($message) {
+			# Don't threads too much, it's SO memory hungry and if you've got
+			# 10,000 messages then watch your Linux machine crash. The joins don't
+			# seem to recover memory much.
+			doit($message);
+			# if($nummessages == 1) {
+				# doit($message);
+			# } else {
+				# my $t = threads->create("doit", $message);
+				# # Don't spawn more than 4 threads at the same time
+				# if((threads->list % 4) == 3) {
+					# foreach (threads->list) {
+						# $_->join();
+					# }
 				# }
 			# }
-		# }
+		}
+	}
+
+	if($filelist) {
+		threads->create("report", $filelist);
+	}
+
+	if($phishlist) {
+		threads->create("phish", $phishlist);
+	}
+
+	undef @messagelist;
+
+	foreach (threads->list) {
+		$_->join();
 	}
 }
-
-if($filelist) {
-	threads->create("reporter", $filelist);
-}
-
-if($phishlist) {
-	threads->create("phish", $phishlist);
-}
-
-undef @messagelist;
-
-foreach (threads->list) {
-	$_->join();
-}
-
-print "Finished\n";
 
 sub doit {
 	my $message = shift;
@@ -213,7 +224,7 @@ sub doit {
 			print "Removing false report from $from\n";
 			$submit = 0;
 		} elsif($from =~ /^Mail Delivery System/) {
-			print "Removing report from $from\n";
+			print "Removing bounce report from $from\n";
 			$submit = 0;
 		}
 	}
@@ -221,7 +232,7 @@ sub doit {
 	if($message =~ /\nSubject: (.+?)\n/i) {
 		my $s = $1;
 		if($s =~ /(?-xsm:(?:M(?:essage you sent blocked by our bulk email filter|ail delivery failed)|Undeliver(?:ed Mail Returned to Sender|able(?: mail[:\$]|[: ]))|Returned mail: (?:see transcript for details|User unknown)|D(?:elivery Status(?: Notification)?|ELIVERY FAILURE[: ])|abuse-noreply\@comcast.net|mail-support\@google.com|^abuse\@|^failure notice|Proweb System Notice - Spam Detected|Message Delivery Failure|Your message was blocked|Mail Delayed))/i) {
-			print "Removing report\n";
+			print "Removing bounce report\n";
 			$submit = 0;
 		} elsif($s =~ /Warning: could not send message for past 4 hours/i) {
 			print "Ignoring report stuck in queue\n";
@@ -259,7 +270,7 @@ sub doit {
 		}
 	}
 
-	my $fh = File::Temp->new(TEMPLATE => 'hotmail-reporterXXXXXX', UNLINK => 0);
+	my $fh = File::Temp->new(TEMPLATE => 'yahoo-reportXXXXXX', UNLINK => 0);
 	print $fh $message;
 	close $fh;
 	if($phish) {
@@ -278,7 +289,7 @@ sub doit {
 	}
 }
 
-sub reporter {
+sub report {
 	my $filelist = shift;
 
 	print "Submitting $filelist to spamcop\n";
@@ -297,7 +308,7 @@ sub phish {
 
 	print "Submitting $phishlist as phish\n";
 
-	system("~njh/bin/phish --no-clamav -m $phishlist");
+	system("phish --no-clamav -m $phishlist");
 
 	print "Removing $phishlist\n";
 	my @l = split(/ /, $phishlist);

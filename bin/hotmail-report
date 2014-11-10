@@ -1,0 +1,307 @@
+#!/usr/bin/env perl
+
+use strict;
+# use warnings::unused;
+use warnings;
+use diagnostics;
+use Mail::IMAPClient;
+use File::Temp;
+use Error qw(:try);
+use ClamAV::Client;
+use Proc::ProcessTable;
+use Digest::MD5;
+use threads;
+use Linux::loadavg;
+use Cache::Memcached;
+use File::Spec;
+use IO::Socket::SSL;
+use Mozilla::CA;
+use FindBin;
+use Config::Auto;
+
+my $conf = File::Spec->catdir(
+	$FindBin::Bin,
+	File::Spec->updir(),
+	'conf',
+	'reporter',
+);
+
+my $config;
+
+eval {
+	$config = Config::Auto::parse($conf);
+};
+if($@) {
+	die "Configuration error: $@ $conf";
+}
+
+my $server = $config->{hotmail}->{server};
+my $user = $config->{hotmail}->{user};
+my $password = $config->{hotmail}->{password};
+
+my @avgs = Linux::loadavg::loadavg(1);
+if($avgs[LOADAVG_1MIN] >= 3) {
+	die "The system is overloaded\n";
+}
+
+# Ensure no more than one instance
+my $t = Proc::ProcessTable->new();
+my $count = 0;
+
+foreach (@{$t->table}) {
+	$count += ($_->cmndline =~ /perl -w.hotmail-reporter+/);
+	if($count > 1) {
+		exit 0;
+	}
+}
+
+my $imap = Mail::IMAPClient->new(Server => $server,
+				User => $user,
+				Password => $password,
+				Ssl => 1,
+				Ignoresizeerrors => 1,
+				Socket => IO::Socket::SSL->new (
+					Proto => 'tcp',
+					PeerAddr => $server,
+					PeerPort => 993,
+					SSL_verify_mode => SSL_VERIFY_NONE,
+					SSL_ca_file => Mozilla::CA::SSL_ca_file(),
+				),
+			) or
+	die "Cannot connect to $server: $@";
+
+$imap->select('Junk') or
+	die 'Select SPAM error: ', $imap->LastError, "\n";
+
+unless($imap->message_count) {
+	$imap->logout();
+	exit 0;
+}
+
+my @messages = $imap->messages('Junk') or
+	die "Cannot get list of messages from $server: $!";
+
+my $nummessages = $#messages + 1;
+
+if($nummessages == 0) {
+	print "Nothing to do\n";
+	$imap->logout();
+	exit 0;
+}
+print "Retrieving $nummessages messages from $server\n";
+
+sub CATCH_PIPE { };
+$SIG{'PIPE'} = "CATCH_PIPE";
+
+my $scanner = ClamAV::Client->new(socket_name => '/var/run/clamav/clamd.sock');
+
+if($scanner) {
+	try {
+		$scanner->ping();
+	} catch ClamAV::Client::Error with {
+		$scanner = ClamAV::Client->new(socket_host => '127.0.0.1',
+					socket_port => 3310);
+		if((not defined $scanner) or (not $scanner->ping())) {
+			die("Can't talk to clamd\n");
+		}
+	}
+}
+
+my @messagelist = ();
+my $dups = 0;
+
+my $memd = new Cache::Memcached {
+	'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
+	'debug' => 0,
+	'compress_threshold' => 10_000
+};
+
+foreach my $msgid (@messages) {
+	my $message = $imap->message_string($msgid);
+	unless($message) {
+		die "Can't retrieve $msgid: $@";
+	}
+	$message =~ s/\r//g;
+
+	my $size = length($message);
+
+	# print "id $msgid size $size\n";
+	if($size > (1024 * 1024)) {
+		print "Message $msgid is very big ($size bytes), ignoring\n";
+		$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+		next;
+	}
+
+	# Calculate the MD5 sum of the body of the email - only
+	# submit it if we haven't seen it before
+	if($message =~ /.+?\n{2}(.+)/s) {
+		my $digest = Digest::MD5::md5_hex($1);
+
+		if($memd->get($digest)) {
+			# print "Ignoring $digest\n";
+			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+			$dups++;
+			next;
+		}
+		$memd->set($digest, 1);
+	}
+	$messagelist[$msgid] = $message;
+
+	# print "Stored message $msgid\n";
+
+	$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+}
+
+$imap->close();
+$imap->logout();
+
+if($dups) {
+	print "$dups duplicates were ignored\n";
+}
+
+chdir File::Spec->tmpdir() || die File::Spec->tmpdir();
+
+my $filelist;
+my $phishlist;
+
+foreach my $message (@messagelist) {
+	if($message) {
+		# Don't threads too much, it's SO memory hungry and if you've got
+		# 10,000 messages then watch your Linux machine crash. The joins don't
+		# seem to recover memory much.
+		doit($message);
+		# if($nummessages == 1) {
+			# doit($message);
+		# } else {
+			# my $t = threads->create("doit", $message);
+			# # Don't spawn more than 4 threads at the same time
+			# if((threads->list % 4) == 3) {
+				# foreach (threads->list) {
+					# $_->join();
+				# }
+			# }
+		# }
+	}
+}
+
+if($filelist) {
+	threads->create("reporter", $filelist);
+}
+
+if($phishlist) {
+	threads->create("phish", $phishlist);
+}
+
+undef @messagelist;
+
+foreach (threads->list) {
+	$_->join();
+}
+
+print "Finished\n";
+
+sub doit {
+	my $message = shift;
+
+	# print "Considering message $message...\n";
+
+	my $submit = 1;
+
+	if($message =~ /From: (.+?)\n/) {
+		my $from = $1;
+		if($from =~ /(?-xsm:(?:abuse-noreply\@comcast.net|mail-support\@google.com|^abuse\@))/i) {
+			print "Removing false report from $from\n";
+			$submit = 0;
+		} elsif($from =~ /^Mail Delivery System/) {
+			print "Removing bounce from $from\n";
+			$submit = 0;
+		}
+	}
+
+	if($message =~ /\nSubject: (.+?)\n/i) {
+		my $s = $1;
+		if($s =~ /(?-xsm:(?:M(?:essage you sent blocked by our bulk email filter|ail delivery failed)|Undeliver(?:ed Mail Returned to Sender|able(?: mail[:\$]|[: ]))|Returned mail: (?:see transcript for details|User unknown)|D(?:elivery Status(?: Notification)?|ELIVERY FAILURE[: ])|abuse-noreply\@comcast.net|mail-support\@google.com|^abuse\@|^failure notice|Proweb System Notice - Spam Detected|Message Delivery Failure|Your message was blocked|Mail Delayed))/i) {
+			print "Removing bounce\n";
+			$submit = 0;
+		} elsif($s =~ /Warning: could not send message for past 4 hours/i) {
+			print "Ignoring report stuck in queue\n";
+			$submit = 0;
+		}
+	}
+
+	unless($submit) {
+		print "Not sending to spamcop\n";
+		return;
+	}
+
+	my $phish = 0;
+
+	if(length $message <= (1024 * 1024)) {
+		# print "Checking for viruses\n";
+		my $virus;
+
+		try {
+			my $m = "From MAILER-DAEMON Fri Dec 29 15:21:26 2006\n" . $message;
+			threads->yield();
+			$virus = $scanner->scan_scalar(\$m);
+		} catch ClamAV::Client::Error with {
+			print "Couldn't scan message for viruses\n";
+			$virus = undef;
+		};
+
+		if($virus) {
+			if($virus =~ /phish/i) {
+				$phish = 1;
+			} else {
+				print "Not forwarding message containing $virus\n";
+				return;
+			}
+		}
+	}
+
+	my $fh = File::Temp->new(TEMPLATE => 'hotmail-reporterXXXXXX', UNLINK => 0);
+	print $fh $message;
+	close $fh;
+	if($phish) {
+		if($phishlist) {
+			$phishlist .= " $fh";
+		} else {
+			$phishlist = $fh;
+		}
+	} else {
+		# print "Will send $fh to spamcop\n";
+		if($filelist) {
+			$filelist .= " $fh";
+		} else {
+			$filelist = $fh;
+		}
+	}
+}
+
+sub reporter {
+	my $filelist = shift;
+
+	print "Submitting $filelist to spamcop\n";
+
+	system("spam-reporter $filelist");
+
+	print "Removing $filelist\n";
+	my @l = split(/ /, $filelist);
+	foreach my $f (@l) {
+		unlink $f || warn "Can't unlink $f: $!\n";
+	}
+}
+
+sub phish {
+	my $phishlist = shift;
+
+	print "Submitting $phishlist as phish\n";
+
+	system("phish --no-clamav -m $phishlist");
+
+	print "Removing $phishlist\n";
+	my @l = split(/ /, $phishlist);
+	foreach my $f (@l) {
+		unlink $f || warn "Can't unlink $f: $!\n";
+	}
+}
