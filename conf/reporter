@@ -11,3 +11,8 @@ password = your_password
 server = imap.mail.yahoo.com
 user = your_name@yahoo.com
 password = your_password
+
+[gmail]
+server = imap.gmail.com
+user = your.name
+password = your_password
