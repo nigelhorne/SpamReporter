@@ -209,6 +209,8 @@ sub process_folder {
 	foreach (threads->list) {
 		$_->join();
 	}
+	$filelist = undef;
+	$phishlist = undef;
 }
 
 sub doit {
