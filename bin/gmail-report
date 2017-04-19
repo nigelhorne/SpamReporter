@@ -143,6 +143,8 @@ foreach my $msgid (@messages) {
 			next;
 		}
 		$memd->set($digest, 1);
+		open(my $sigtool, '|-', '/usr/bin/sigtool --md5 >> /var/lib/clamav/local.hdb');
+		print $sigtool $message;
 	}
 	$messagelist[$msgid] = $message;
 
