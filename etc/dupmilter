@@ -1,0 +1,167 @@
+#!/usr/bin/env perl
+
+#  Copyright (C) 2014-2016 Nigel Horne <njh@bandsman.co.uk>.
+
+# Usage is subject to licence terms.
+# The licence terms of this software are as follows:
+# Personal single user, single computer use: GPL2
+# All other users (including Commercial, Charity, Educational, Government)
+#	must apply in writing for a licence for use from Nigel Horne at the
+#	above e-mail.
+
+# Scan the 'bounce' memcache.  If an e-mail comes in which is in that then
+# it must be spam, so block it
+
+# To install, simply put this script into /usr/local/etc/dupmilter
+
+# To run add this to /etc/rc.local:
+#	rm -f /var/tmp/dupmilter
+#	/usr/local/etc/dupmilter local:/var/tmp/dupmilter
+#
+# or put this is in /etc/systemd/system/dupmilter.service:
+#
+# [Unit]
+# Description=Block resent spams
+# After=network.target
+# 
+# [Service]
+# ExecStart=/usr/local/etc/dupmilter local:/var/run/dupmilter
+# KillMode=process
+# Restart=on-failure
+# 
+# [Install]
+# WantedBy=multi-user.target
+#
+# INPUT_MAIL_FILTER(`dupmilter', `S=local:/var/tmp/dupmilter, F=T, T=S:4m;R:4m')dnl
+
+# Version 1.0 12/4/13:
+#	First version
+# Version 1.1 26/4/16:
+#	Don't scan local connections
+
+use strict;
+use diagnostics;
+use warnings;
+use Sendmail::PMilter qw(:all);
+use Cache::Memcached;
+use Digest::MD5;
+use Net::DNS;
+use Data::Validate::IP;
+
+my $milter = Sendmail::PMilter->new();
+my $resolver = Net::DNS::Resolver->new();
+
+my $memd = new Cache::Memcached {
+	'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
+	'debug' => 0,
+	'compress_threshold' => 10_000
+};
+
+my %cbs;
+$cbs{'connect'} = sub {
+        my ($ctx, $hostname) = @_;
+
+        my $ip;
+
+        if($hostname =~ /\[(.+)]/) {
+                $ip = $1;
+                unless(is_ipv4($ip)) {
+                        warn("$ip isn't a valid IPv4 address");
+                        $ctx->setreply(554, "5.7.1", "$ip isn't a valid IPv4 address");
+                        return SMFIS_REJECT;
+                }
+                if($ip =~ /^192\.168\./) {
+                        return SMFIS_ACCEPT;
+                }
+        } elsif($hostname eq 'localhost') {
+                return SMFIS_ACCEPT;
+        } else {
+                my $query = $resolver->search($hostname);
+
+                if($query) {
+                        foreach my $rr ($query->answer()) {
+                                next unless($rr->type() eq 'A');
+                                $ip = $rr->address();
+                                last;
+                        }
+                } else {
+                        warn("Can't resolve hostname $hostname, " . $resolver->errorstring());
+                        $ctx->setreply(554, "5.7.1", "Can't resolve hostname $hostname");
+                        return SMFIS_REJECT;
+                }
+
+                unless($ip) {
+                        warn("hostname $hostname, has no A record - rejecting");
+                        $ctx->setreply(554, "5.7.1", "hostname $hostname, has no A record - rejecting");
+                        return SMFIS_REJECT;
+                }
+
+                print "dupmilter: connection from $hostname\n",
+                        "resolved to $ip\n";
+        }
+
+        if(is_private_ipv4($ip) || is_loopback_ipv4($ip)) {
+                return SMFIS_ACCEPT;
+        }
+
+        return SMFIS_CONTINUE;
+};
+$cbs{'eoh'} = sub {
+	my $ctx = shift;
+
+	$ctx->setpriv({});	# Put empty hash into private area
+
+	return SMFIS_CONTINUE;
+};
+$cbs{'body'} = sub {
+	my ($ctx, $body) = @_;
+
+	my $hash = $ctx->getpriv();
+
+	$hash->{'body'} .= $body;
+
+	$ctx->setpriv($hash);
+
+	return SMFIS_CONTINUE;
+};
+$cbs{'eom'} = sub {
+	my $ctx = shift;
+
+	my $hash = $ctx->getpriv();
+
+	my $body = $hash->{'body'};
+
+	unless(defined($body)) {
+		return SMFIS_CONTINUE;
+	}
+
+	$body =~ s/\r//g;
+
+	if(length($body) > (1024 * 1024)) {
+		# print "Ignoring large e-mail\n";
+		$ctx->setpriv(undef);
+		return SMFIS_ACCEPT;
+	}
+
+	my $digest = Digest::MD5::md5_hex($body);
+
+	if($memd->get($digest)) {
+		print "dupmilter found spam signature $digest\n";
+		$ctx->setreply(554, '5.7.1', 'Rejecting your spam');
+		return SMFIS_REJECT;
+	}
+	$ctx->setpriv(undef);
+	# print "Not a match\n";
+	return SMFIS_ACCEPT;
+};
+$cbs{'close'} = $cbs{'abort'} = sub {
+	my $ctx = shift;
+	$ctx->setpriv(undef);
+
+	# print "abort\n";
+	return SMFIS_CONTINUE;
+};
+
+$milter->auto_setconn('dupmilter');
+$milter->register('dupmilter', \%cbs, SMFI_CURR_ACTS);
+$milter->main();
