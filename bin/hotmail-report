@@ -18,6 +18,7 @@ use IO::Socket::SSL;
 use Mozilla::CA;
 use FindBin;
 use Config::Auto;
+use Sys::Syslog qw(:standard :macros);
 
 my $conf = File::Spec->catdir(
 	$FindBin::Bin,
@@ -193,6 +194,12 @@ if($filelist) {
 if($phishlist) {
 	threads->create("phish", $phishlist);
 }
+
+openlog 'spam', 'cons,pid', 'user';
+
+syslog(LOG_INFO, 'Reported ' . scalar(@messagelist) . ' e-mails');
+
+closelog();
 
 undef @messagelist;
 
