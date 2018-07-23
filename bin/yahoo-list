@@ -58,7 +58,7 @@ sub print_headers {
 	my $params = shift;
 	my $folder = $params->{'folder'};
 	my $imap = $params->{'imap'};
- 
+
 	unless($imap->select($folder)) {
 		warn "Select $folder error: ", $imap->LastError, "\n";
 		return;

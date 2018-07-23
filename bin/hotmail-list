@@ -44,7 +44,7 @@ my $imap = Mail::IMAPClient->new(Server => $server,
 				),
 			) or
 	die "Cannot connect to $server: $@";
- 
+
 $imap->select('Junk') or
 	die 'Select Spam error: ', $imap->LastError, "\n";
 
