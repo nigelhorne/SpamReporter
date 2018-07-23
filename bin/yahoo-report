@@ -83,7 +83,7 @@ if($scanner) {
 		if((not defined $scanner) or (not $scanner->ping())) {
 			die("Can't talk to clamd\n");
 		}
-	}
+	};
 }
 
 process_folder({ imap => $imap, folder => 'Bulk Mail', scanner => $scanner });

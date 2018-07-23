@@ -105,7 +105,7 @@ if($scanner) {
 		if((not defined $scanner) or (not $scanner->ping())) {
 			die("Can't talk to clamd\n");
 		}
-	}
+	};
 }
 
 my @messagelist = ();
