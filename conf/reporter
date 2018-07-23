@@ -1,6 +1,6 @@
 [reporter]
 fakeaddress = devnull@example.com
-knujon = your_account@knujon.net
+# knujon = your_account@knujon.net
 
 [hotmail]
 server = imap-mail.outlook.com
