@@ -90,7 +90,7 @@ if($nummessages == 0) {
 }
 print "Retrieving $nummessages messages from $server\n";
 
-sub CATCH_PIPE { };
+sub CATCH_PIPE { }
 $SIG{'PIPE'} = "CATCH_PIPE";
 
 my $scanner = ClamAV::Client->new(socket_name => '/var/run/clamav/clamd.sock');

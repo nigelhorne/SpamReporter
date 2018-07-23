@@ -121,7 +121,7 @@ sub process_folder {
 	}
 	print "Retrieving $nummessages messages from $server\n";
 
-	sub CATCH_PIPE { };
+	sub CATCH_PIPE { }
 	$SIG{'PIPE'} = "CATCH_PIPE";
 
 	my @messagelist = ();

@@ -59,7 +59,7 @@ my $nummessages = $#messages + 1;
 
 print "Showing subjects for $nummessages at $server\n";
 
-sub CATCH_PIPE { };
+sub CATCH_PIPE { }
 $SIG{'PIPE'} = "CATCH_PIPE";
 
 foreach (@messages) {
