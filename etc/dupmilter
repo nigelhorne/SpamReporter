@@ -85,7 +85,7 @@ $cbs{'connect'} = sub {
 				last;
 			}
 		} else {
-			warn("Can't resolve hostname $hostname, " . $resolver->errorstring());
+			warn("Can't resolve hostname $hostname, ", $resolver->errorstring());
 			$ctx->setreply(554, "5.7.1", "Can't resolve hostname $hostname");
 			return SMFIS_REJECT;
 		}
