@@ -52,7 +52,7 @@ my $milter = Sendmail::PMilter->new();
 my $resolver = Net::DNS::Resolver->new();
 
 my $memd = new Cache::Memcached {
-	'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
+	'servers' => [ '127.0.0.1:11211', '192.168.1.15:11211', '192.168.1.1:11211' ],
 	'debug' => 0,
 	'compress_threshold' => 10_000
 };
@@ -119,28 +119,64 @@ $cbs{'header'} = sub {
 			my($header, $value) = split /\: /, $line, 2;
 			my($username, $domain) = split /\@/, $value, 2;
 			$username =~ s/\<//g;
+			$username =~ s/\n//g;
 			$username = lc($username);
 			$hash->{'from'} = $username;
-			if($hash->{'subject'} && (my $entry = $memd->get($hash->{'subject'}))) {
-				if($entry eq $username) {
-					print "dupmilter: potential spam from $username\n";
+			print 'dupmilterdebug: from: ', $hash->{'from'}, "\n";
+			my $subject = $hash->{'subject'};
+			if($subject && (my $entry = $memd->get($subject))) {
+				# Same e-mail sent from two people
+				if($entry ne $username) {
+					print "dupmilterdebug: potential spam $subject from $username previously sent by $entry\n";
+				} else {
+					print "dupmilterdebug: $subject from $username sent more than once\n";
 				}
 			}
 		} elsif($line =~ m/Subject\: /g) {
 			my($header, $value) = split /\: /, $line, 2;
 			$value = lc($value);
+			$value =~ s/\n//g;
 			$hash->{'subject'} = $value;
-			if($hash->{'from'} && (my $entry = $memd->get($value))) {
-				if($entry eq $value) {
-					print 'dupmilter: potential spam from ', $hash->{'from'}, "\n";
+			print 'dupmilterdebug: subject: ', $hash->{'subject'}, "\n";
+			my $from = $hash->{'from'};
+			if($from && (my $entry = $memd->get($value))) {
+				# Same e-mail sent from two people
+				if($entry ne $from) {
+					print "dupmilterdebug: potential spam $value from $from and $entry\n";
+				} else {
+					print "dupmilterdebug: $value from $from sent more than once\n";
 				}
 			}
 		}
 		# push @header, $line;
 	}
+
 	SMFIS_CONTINUE;
 };
+$cbs{'eoh'} = sub {
+	my $ctx = shift;
 
+	my $hash = $ctx->getpriv();
+	my $subject = $hash->{'subject'};
+	my $from = $hash->{'from'};
+
+	if($subject && $from) {
+		print "dupmilterdebug: lookup $subject\n";
+		if(my $prev = $memd->get($subject)) {
+			if($prev ne $from) {
+				print "dupmilterdebug: $subject has come from both $prev and $from\n";
+			} else {
+				print "dupmilterdebug: $subject has come more than once from $from\n";
+			}
+		} else {
+			print "dupmilterdebug: set $subject to $from\n";
+			$memd->set($subject, $from, 60*60*24);
+		}
+	}
+	$ctx->setpriv({});	# Recover memory
+
+	return SMFIS_CONTINUE;
+};
 $cbs{'body'} = sub {
 	my ($ctx, $body) = @_;
 
