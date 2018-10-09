@@ -9,8 +9,9 @@
 #	must apply in writing for a licence for use from Nigel Horne at the
 #	above e-mail.
 
-# Scan the 'bounce' memcache.  If an e-mail comes in which is in that then
-# it must be spam, so block it
+# Block emails that have previously been reported as spam.
+# Block emails with the same subject that come from more than one person.
+#	TODO: more work to avoid false-positives
 
 # To install, simply put this script into /usr/local/etc/dupmilter
 
@@ -78,9 +79,7 @@ $cbs{'connect'} = sub {
 	} elsif($hostname eq 'localhost') {
 		return SMFIS_ACCEPT;
 	} else {
-		my $query = $resolver->search($hostname);
-
-		if($query) {
+		if(my $query = $resolver->search($hostname)) {
 			foreach my $rr ($query->answer()) {
 				next unless($rr->type() eq 'A');
 				$ip = $rr->address();
@@ -124,14 +123,16 @@ $cbs{'header'} = sub {
 			$username =~ s/\n//g;
 			$username = lc($username);
 			$hash->{'from'} = $username;
-			print 'dupmilterdebug: from: ', $hash->{'from'}, "\n";
+			# print 'dupmilter: from: ', $hash->{'from'}, "\n";
 			my $subject = $hash->{'subject'};
-			if($subject && (my $entry = $cache->get($subject))) {
+			if($subject && ($subject !~ /^Re: /) && (my $entry = $cache->get($subject))) {
 				# Same e-mail sent from two people
 				if($entry ne $username) {
-					print "dupmilterdebug: potential spam $subject from $username previously sent by $entry\n";
+					print "dupmilter: spam $subject from $username previously sent by $entry\n";
+					$ctx->setreply(554, '5.7.1', 'Rejecting your spam');
+					return SMFIS_REJECT;
 				} else {
-					print "dupmilterdebug: $subject from $username sent more than once\n";
+					# print "dupmilter: $subject from $username sent more than once\n";
 				}
 			}
 		} elsif($line =~ m/Subject\: /g) {
@@ -139,14 +140,16 @@ $cbs{'header'} = sub {
 			$value = lc($value);
 			$value =~ s/\n//g;
 			$hash->{'subject'} = $value;
-			print 'dupmilterdebug: subject: ', $hash->{'subject'}, "\n";
+			# print 'dupmilter: subject: ', $hash->{'subject'}, "\n";
 			my $from = $hash->{'from'};
-			if($from && (my $entry = $cache->get($value))) {
+			if($from && ($value !~ /^Re: /) && (my $entry = $cache->get($value))) {
 				# Same e-mail sent from two people
 				if($entry ne $from) {
-					print "dupmilterdebug: potential spam $value from $from and $entry\n";
+					print "dupmilter: spam $value from $from previously sent by $entry\n";
+					$ctx->setreply(554, '5.7.1', 'Rejecting your spam');
+					return SMFIS_REJECT;
 				} else {
-					print "dupmilterdebug: $value from $from sent more than once\n";
+					# print "dupmilter: $value from $from sent more than once\n";
 				}
 			}
 		}
@@ -162,17 +165,19 @@ $cbs{'eoh'} = sub {
 	my $subject = $hash->{'subject'};
 	my $from = $hash->{'from'};
 
-	if($subject && $from) {
-		print "dupmilterdebug: lookup $subject\n";
+	if($subject && ($subject !~ /^Re: /) && $from) {
+		# print "dupmilter: lookup $subject\n";
 		if(my $prev = $cache->get($subject)) {
 			if($prev ne $from) {
-				print "dupmilterdebug: $subject has come from both $prev and $from\n";
+				print "dupmilter: $subject has come from both $prev and $from\n";
+				$ctx->setreply(554, '5.7.1', 'Rejecting your spam');
+				return SMFIS_REJECT;
 			} else {
-				print "dupmilterdebug: $subject has come more than once from $from\n";
+				# print "dupmilter: $subject has come more than once from $from\n";
 			}
 		} else {
-			print "dupmilterdebug: set $subject to $from\n";
-			$cache->set($subject, $from, 60*60*24);
+			# print "dupmilter: set $subject to $from\n";
+			$cache->set($subject, $from, '1 hour');
 		}
 	}
 	$ctx->setpriv({});	# Recover memory

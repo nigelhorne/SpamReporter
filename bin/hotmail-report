@@ -12,7 +12,7 @@ use Proc::ProcessTable;
 use Digest::MD5;
 use threads;
 use Linux::loadavg;
-use Cache::Memcached;
+use CHI::Driver::Memcached;
 use File::Spec;
 use IO::Socket::SSL;
 use Mozilla::CA;
@@ -111,11 +111,13 @@ if($scanner) {
 my @messagelist = ();
 my $dups = 0;
 
-my $memd = new Cache::Memcached {
-	'servers' => [ '127.0.0.1:11211', '192.168.1.1:11211', '192.168.1.15:11211' ],
+my $cache = CHI->new(
+	driver => 'Memcached',
+	namespace => 'dupmilter',
+	'servers' => [ '127.0.0.1:11211', '192.168.1.15:11211', '192.168.1.1:11211' ],
 	'debug' => 0,
 	'compress_threshold' => 10_000
-};
+);
 
 foreach my $msgid (@messages) {
 	my $message = $imap->message_string($msgid);
@@ -138,13 +140,13 @@ foreach my $msgid (@messages) {
 	if($message =~ /.+?\n{2}(.+)/s) {
 		my $digest = Digest::MD5::md5_hex($1);
 
-		if($memd->get($digest)) {
+		if($cache->get($digest)) {
 			# print "Ignoring $digest\n";
 			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
 			$dups++;
 			next;
 		}
-		$memd->set($digest, 1);
+		$cache->set($digest, 1);
 		open(my $sigtool, '|-', '/usr/bin/sigtool --md5 >> /var/lib/clamav/local.hdb');
 		print $sigtool $message;
 	}
