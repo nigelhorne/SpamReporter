@@ -235,6 +235,7 @@ sub doit {
 			$submit = 0;
 		} elsif($s =~ /^Re: \[SpamCop \(/) {
 			print "Removing spamcop acknowledgement\n";
+			$submit = 0;
 		} elsif($s =~ /Warning: could not send message for past 4 hours/i) {
 			print "Ignoring report stuck in queue\n";
 			$submit = 0;
