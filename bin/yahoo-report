@@ -247,6 +247,8 @@ sub doit {
 		if($s =~ /(?-xsm:(?:M(?:essage you sent blocked by our bulk email filter|ail delivery failed)|Undeliver(?:ed Mail Returned to Sender|able(?: mail[:\$]|[: ]))|Returned mail: (?:see transcript for details|User unknown)|D(?:elivery Status(?: Notification)?|ELIVERY FAILURE[: ])|abuse-noreply\@comcast.net|mail-support\@google.com|^abuse\@|^failure notice|Proweb System Notice - Spam Detected|Message Delivery Failure|Your message was blocked|Mail Delayed))/i) {
 			print "Removing bounce report\n";
 			$submit = 0;
+		} elsif($s =~ /^Re: [SpamCop \(/) {
+			print "Removing spamcop acknowledgement\n";
 		} elsif($s =~ /Warning: could not send message for past 4 hours/i) {
 			print "Ignoring report stuck in queue\n";
 			$submit = 0;
