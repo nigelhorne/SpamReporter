@@ -96,8 +96,7 @@ foreach (@messages) {
 	my %headers = %{$imap->parse_headers($_, 'To', 'Subject')};
 
 	if($headers{'To'}) {
-		print $headers{'To'}[0];
-		print ': ';
+		print $headers{'To'}[0], ': ';
 	}
 	if($headers{'Subject'}) {
 		print scalar(MIME::EncWords::decode_mimewords($headers{'Subject'}[0]));
