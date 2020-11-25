@@ -257,7 +257,9 @@ sub doit {
 		try {
 			my $m = "From MAILER-DAEMON Fri Dec 29 15:21:26 2006\n" . $message;
 			threads->yield();
-			$virus = $scanner->scan_scalar(\$m);
+			if($scanner) {
+				$virus = $scanner->scan_scalar(\$m);
+			}
 		} catch ClamAV::Client::Error with {
 			print "Couldn't scan message for viruses\n";
 			$virus = undef;
