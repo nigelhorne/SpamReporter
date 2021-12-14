@@ -55,7 +55,7 @@ my $resolver = Net::DNS::Resolver->new();
 my $cache = CHI->new(
 	driver => 'Memcached',
 	namespace => 'dupmilter',
-	'servers' => [ '127.0.0.1:11211', '192.168.1.15:11211', '192.168.1.1:11211' ],
+	'servers' => [ '127.0.0.1:11211', '192.168.1.16:11211', '192.168.1.15:11211', '192.168.1.2:11211' ],
 	'debug' => 0,
 	'compress_threshold' => 10_000
 );
