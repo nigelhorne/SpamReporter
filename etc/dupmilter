@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-#  Copyright (C) 2014-2018 Nigel Horne <njh@bandsman.co.uk>.
+#  Copyright (C) 2014-2022 Nigel Horne <njh@bandsman.co.uk>.
 
 # Usage is subject to licence terms.
 # The licence terms of this software are as follows:
@@ -52,6 +52,11 @@ use Data::Validate::IP;
 my $milter = Sendmail::PMilter->new();
 my $resolver = Net::DNS::Resolver->new();
 
+my %whitelist_hosts = (
+	'oracle1.bandsman.co.uk' => 1,
+	'oracle2.bandsman.co.uk' => 1,
+);
+
 my $cache = CHI->new(
 	driver => 'Memcached',
 	namespace => 'dupmilter',
@@ -78,6 +83,8 @@ $cbs{'connect'} = sub {
 		}
 	} elsif($hostname eq 'localhost') {
 		return SMFIS_ACCEPT;
+	} elsif(exists($whitelist_hosts{$hostname})) {
+                return SMFIS_ACCEPT;
 	} else {
 		if(my $query = $resolver->search($hostname)) {
 			foreach my $rr ($query->answer()) {
