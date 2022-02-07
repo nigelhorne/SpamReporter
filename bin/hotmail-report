@@ -146,7 +146,7 @@ foreach my $msgid (@messages) {
 			$dups++;
 			next;
 		}
-		$cache->set($digest, 1);
+		$cache->set($digest, 1, '1 week');
 		open(my $sigtool, '|-', '/usr/bin/sigtool --md5 >> /var/lib/clamav/local.hdb');
 		print $sigtool $message;
 	}
