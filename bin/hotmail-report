@@ -42,7 +42,7 @@ my $password = $config->{hotmail}->{password};
 
 my @avgs = Linux::loadavg::loadavg(1);
 if($avgs[LOADAVG_1MIN] >= 3) {
-	die "The system is overloaded\n";
+	die 'The system is overloaded';
 }
 
 # Ensure no more than one instance
@@ -72,7 +72,7 @@ my $imap = Mail::IMAPClient->new(Server => $server,
 	die "Cannot connect to $server: $@";
 
 $imap->select('Junk') or
-	die 'Select SPAM error: ', $imap->LastError, "\n";
+	die 'Select SPAM error: ', $imap->LastError();
 
 unless($imap->message_count) {
 	$imap->logout();
@@ -103,7 +103,7 @@ if($scanner) {
 		$scanner = ClamAV::Client->new(socket_host => '127.0.0.1',
 					socket_port => 3310);
 		if((not defined $scanner) or (not $scanner->ping())) {
-			die("Can't talk to clamd\n");
+			die "Can't talk to clamd";
 		}
 	};
 }
