@@ -71,7 +71,7 @@ my $imap = Mail::IMAPClient->new(User => $user,
 my $folder = $imap->xlist_folders()->{'Spam'};
 
 $imap->select($folder) or
-	die 'Select Spam error: ', $imap->LastError, "\n";
+	die 'Select Spam error: ', $imap->LastError();
 
 unless($imap->message_count) {
 	$imap->logout();
@@ -121,7 +121,7 @@ my $cache = CHI->new(
 foreach my $msgid (@messages) {
 	my $message = $imap->message_string($msgid);
 	unless($message) {
-		die "Can't retrieve $msgid: $@";
+		die $imap->LastError();
 	}
 	$message =~ s/\r//g;
 

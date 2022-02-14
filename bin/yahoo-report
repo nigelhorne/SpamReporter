@@ -41,7 +41,7 @@ my $password = $config->{yahoo}->{password};
 
 my @avgs = Linux::loadavg::loadavg(1);
 if($avgs[LOADAVG_1MIN] >= 3) {
-	die "The system is overloaded\n";
+	die 'The system is overloaded';
 }
 
 # Ensure no more than one instance
@@ -81,7 +81,7 @@ if($scanner) {
 		$scanner = ClamAV::Client->new(socket_host => '127.0.0.1',
 					socket_port => 3310);
 		if((not defined $scanner) or (not $scanner->ping())) {
-			die("Can't talk to clamd\n");
+			die "Can't talk to clamd";
 		}
 	};
 }
@@ -138,7 +138,7 @@ sub process_folder {
 	foreach my $msgid (@messages) {
 		my $message = $imap->message_string($msgid);
 		unless($message) {
-			die "Can't retrieve $msgid: $@";
+			die $imap->LastError();
 		}
 		$message =~ s/\r//g;
 
