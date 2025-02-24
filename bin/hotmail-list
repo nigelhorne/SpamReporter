@@ -75,33 +75,52 @@ my $imap = Mail::IMAPClient->new(Server => $server,
 			) or
 	die "Cannot connect to $server: $@";
 
-$imap->select('Junk') or
-	die 'Select Spam error: ', $imap->LastError, "\n";
+# print "Folders: ", join("\n\t", @{$imap->folders()}), "\n";
 
-unless($imap->message_count) {
-	$imap->logout();
-	exit 0;
-}
-
-my @messages = $imap->messages('Junk');
-
-my $nummessages = $#messages + 1;
-
-print "Showing subjects for $nummessages at $server\n";
-
-sub CATCH_PIPE { }
-$SIG{'PIPE'} = "CATCH_PIPE";
-
-foreach (@messages) {
-	my %headers = %{$imap->parse_headers($_, 'To', 'Subject')};
-
-	if($headers{'To'}) {
-		print $headers{'To'}[0], ': ';
-	}
-	if($headers{'Subject'}) {
-		print scalar(MIME::EncWords::decode_mimewords($headers{'Subject'}[0]));
-	}
-	print "\n";
-}
+print_headers({ imap => $imap, folder => 'Junk' });
+print_headers({ imap => $imap, folder => 'Bulk Mail' });
+print_headers({ imap => $imap, folder => 'Unwanted' });
+print_headers({ imap => $imap, folder => 'Clutter' });
+print_headers({ imap => $imap, folder => 'Archive' });
+print_headers({ imap => $imap, folder => 'Archives' });
 
 $imap->logout();
+
+sub print_headers {
+	my $params = shift;
+	my $folder = $params->{'folder'};
+	my $imap = $params->{'imap'};
+
+	unless($imap->select($folder)) {
+		warn "Select $folder error: ", $imap->LastError();
+		return;
+	}
+
+	unless($imap->message_count) {
+		# print "$folder: ", $imap->message_count(), " messages\n";
+		$imap->close();
+		return;
+	}
+
+	my @messages = $imap->messages($folder);
+
+	my $nummessages = $#messages + 1;
+
+	print "Showing subjects for $nummessages at $server\n";
+
+	sub CATCH_PIPE { }
+	$SIG{'PIPE'} = "CATCH_PIPE";
+
+	foreach (@messages) {
+		my %headers = %{$imap->parse_headers($_, 'To', 'Subject')};
+
+		if($headers{'To'}) {
+			print $headers{'To'}[0], ': ';
+		}
+		if($headers{'Subject'}) {
+			print scalar(MIME::EncWords::decode_mimewords($headers{'Subject'}[0]));
+		}
+		print "\n";
+	}
+	$imap->close();
+}
