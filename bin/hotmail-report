@@ -131,7 +131,7 @@ foreach my $msgid (@messages) {
 	# print "id $msgid size $size\n";
 	if($size > (1024 * 1024)) {
 		print "Message $msgid is very big ($size bytes), ignoring\n";
-		$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+		$imap->delete_message($msgid) || warn "Couldn't delete message $msgid";
 		next;
 	}
 
@@ -142,7 +142,7 @@ foreach my $msgid (@messages) {
 
 		if($cache->get($digest)) {
 			# print "Ignoring $digest\n";
-			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+			$imap->delete_message($msgid) || warn "Couldn't delete message $msgid";
 			$dups++;
 			next;
 		}
@@ -154,7 +154,7 @@ foreach my $msgid (@messages) {
 
 	# print "Stored message $msgid\n";
 
-	$imap->delete_message($msgid) || warn "Couldn't delete message $msgid\n";
+	$imap->delete_message($msgid) || warn "Couldn't delete message $msgid";
 }
 
 $imap->close();
@@ -304,7 +304,7 @@ sub reporter {
 	print "Removing $filelist\n";
 	my @l = split(/ /, $filelist);
 	foreach my $f (@l) {
-		unlink $f || warn "Can't unlink $f: $!\n";
+		unlink $f || warn "Can't unlink $f: $!";
 	}
 }
 
@@ -318,6 +318,6 @@ sub phish {
 	print "Removing $phishlist\n";
 	my @l = split(/ /, $phishlist);
 	foreach my $f (@l) {
-		unlink $f || warn "Can't unlink $f: $!\n";
+		unlink $f || warn "Can't unlink $f: $!";
 	}
 }
